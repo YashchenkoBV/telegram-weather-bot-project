@@ -9,6 +9,8 @@ WEATHER_TOKEN = ''
 current_area = ''
 new_name = ''
 current_name = ''
+user_markup = ReplyKeyboardMarkup([['/registration', '/enter']], one_time_keyboard=False)
+functional_markup = ReplyKeyboardMarkup([['/temperature', '/weather_conditions', '/weather', '/map'], ['change_city']])
 
 
 def registration(update, context):
@@ -36,12 +38,18 @@ def registration_password(update, context):
     user.constant_city = ''
     db_sess.add(user)
     db_sess.commit()
-    update.message.reply_text('Регистрация успешно завершена')
+    functional(update, context)
     return ConversationHandler.END
 
 
 def help(update, context):
-    update.message.reply_text('Какая-то помощь')
+    update.message.reply_text('Вы используете бот-метеоролог. Чтобы получить доступ ко всем функциям вам необходимо'
+                              'пройти регистрацию или выполнить вход, если вы использовали бота ранее. После '
+                              'этого вам будут доступны следующие функции: выбор города проживания (/change_city),'
+                              'вывод температуры в городе проживания (/temperature), вывод погодных условий, а'
+                              'именно влажности, скорости и направления ветра, атмосферного давления '
+                              '(/weather_conditions), вывод всей информации о погоде (/weather), вывод метеокарты'
+                              '(/map)')
 
 
 def stop(update, context):
@@ -50,8 +58,12 @@ def stop(update, context):
 
 
 def start(update, context):
-    update.message.reply_text('Какое-то приветствие')
+    update.message.reply_text('Добро пожаловать в бот-метеоролог! Чтобы начать '
+                              'пройдите регистрацию или выполните вход', reply_markup=user_markup)
 
+def functional(update, context):
+    update.message.reply_text('Добро пожаловать!'
+                              'Вам доступны следующие функции:', reply_markup=functional_markup)
 
 def enter(update, context):
     update.message.reply_text('''Вы активировали процесс входа. Чтобы прервать последующий диалог,
@@ -87,7 +99,7 @@ def enter_password(update, context):
         if user.name == current_name and user.password == password:
             f = True
     if f:
-        update.message.reply_text('Добро пожаловать!')
+        functional(update, context)
         return ConversationHandler.END
 
 
