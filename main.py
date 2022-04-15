@@ -1,5 +1,5 @@
 from telegram.ext import Updater, MessageHandler, Filters
-from telegram.ext import CallbackContext, CommandHandler, ConversationHandler
+from telegram.ext import CommandHandler, ConversationHandler
 from telegram import ReplyKeyboardMarkup
 from geopy import geocoders
 from data import db_session
@@ -9,8 +9,6 @@ from data.geolocation import User
 
 TOKEN = '5278858507:AAFA_jQaFD8oSFzMqyp3G5e0mjqS-hYkwT4'
 WEATHER_TOKEN = 'a911cb6b-7f4b-4b40-99b4-a1a8f235ad78'
-current_area = ''
-new_name = ''
 current_name = ''
 user_keyboard = [['/registration', '/enter']]
 functions_keyboard = [['/advice', '/weather_conditions', '/weather', '/link'], ['change_city']]
@@ -25,8 +23,14 @@ def registration(update, context):
 
 
 def registration_name(update, context):
-    global new_name
-    new_name = update.message.text
+    context.user_data['new_name'] = update.message.text
+    db_session.global_init("db/blogs.db")
+    db_sess = db_session.create_session()
+    for user in db_sess.query(User).all():
+        if user.name == context.user_data['new_name']:
+            update.message.reply_text('Пользователь с таким именем уже существет. '
+                                      'Пожалуйста, придумайте другое')
+            return 1
     update.message.reply_text('Теперь придумайте пароль')
     return 2
 
@@ -40,17 +44,25 @@ def geolocation(city: str):
 
 def registration_password(update, context):
     password = update.message.text
-    db_session.global_init("db/blogs.db")
+    context.user_data['password'] = password
+    update.message.reply_text('Отлично, все почти готово'
+                              'Теперь введите Ваш город проживания')
+
+    return 3
+
+
+def registration_city(update, context):
+    city = update.message.text
+    db_session.global_init("db/cities.db")
     db_sess = db_session.create_session()
 
     user = User()
-    user.name = new_name
-    user.password = password
-    user.latest_city = ''
-    user.constant_city = ''
+    user.name = context.user_data['new_name']
+    user.password = context.user_data['password']
+    user.constant_city = city
     db_sess.add(user)
     db_sess.commit()
-    update.message.reply_text('Регистрация успешно завершена')
+    update.message.reply_text('Регистрация успешно пройдена!')
     return ConversationHandler.END
 
 
@@ -62,7 +74,8 @@ def help(update, context):
                               'вывод подробной информации о погоде (/weather_conditions),'
                               'совет о том, что надеть в такую погоду (/advice),'
                               'ссылка на сайт Яндекс.Погоды, где можно найти более'
-                              'подробную информацию и метеокарту (/link)')
+                              'подробную информацию и метеокарту (/link).'
+                              'Для отмены действия воспользуйтесь командой /stop')
 
 
 def stop(update, context):
@@ -71,13 +84,32 @@ def stop(update, context):
 
 
 def start(update, context):
+    context.user_data['name'] = '---'
     update.message.reply_text('Добро пожаловать в бот-метеоролог! Чтобы начать '
                               'пройдите регистрацию или выполните вход', reply_markup=user_markup)
 
 
 def functional(update, context):
-    update.message.reply_text('Добро пожаловать!'
+    update.message.reply_text(f'Добро пожаловать, {context.user_data["name"]}!'
                               'Вам доступны следующие функции:', reply_markup=functional_markup)
+
+
+def change_city(update, context):
+    update.message.reply_text('Хотите поменять город проживания?'
+                              'Хорошо, введите новое место:')
+    return 1
+
+
+def change_city_handling(update, context):
+    new_city = update.message.text
+    db_session.global_init("db/cities.db")
+    db_sess = db_session.create_session()
+    user = db_sess.query(User).filter(User.name == context.user_data['name']).all
+    user.constant_city = new_city
+    db_sess.commit()
+    update.message.reply_text('Город проживания успешно изменен')
+    return ConversationHandler.END
+
 
 
 def enter(update, context):
@@ -110,12 +142,13 @@ def enter_password(update, context):
     password = update.message.text
     f = False
 
-    db_session.global_init("db/blogs.db")
+    db_session.global_init("db/cities.db")
     db_sess = db_session.create_session()
     for user in db_sess.query(User).all():
         if user.name == current_name and user.password == password:
             f = True
     if f:
+        context.user_data['name'] = current_name
         functional(update, context)
         return ConversationHandler.END
     else:
@@ -138,7 +171,7 @@ def yandex_weather(latitude, longitude, token):
                   }
 
     wind_dir = {'nw': 'северо-западное', 'n': 'северное', 'ne': 'северо-восточное', 'e': 'восточное',
-                'se': 'юго-восточное', 's': 'южное', 'sw': 'юго-западное', 'w': 'западное', 'с': 'штиль'}
+                'se': 'юго-восточное', 's': 'южное', 'sw': 'юго-западное', 'w': 'западное', 'c': 'штиль'}
 
     season = {'summer': 'лето', 'autumn': 'осень', 'winter': 'зима', 'spring': 'весна'}
     yandex_json = json.loads(yandex_req.text)
@@ -166,23 +199,28 @@ def yandex_weather(latitude, longitude, token):
     return weather
 
 
-def print_weather(dict_weather_yandex, update, context):
-    global current_area
+def link(update, context):
+    cur_area = context.user_data['current_area']
+    if cur_area:
+        latitude, longitude = geolocation(cur_area)
+        url_yandex = f'https://api.weather.yandex.ru/v2/informers?lat={latitude}&lon={longitude}&[lang=ru_RU]'
+        update.message.reply_text(f'Вот ссылка на боле подробную информацию о погоде:\n{url_yandex}')
+    else:
+        update.message.reply_text('Для начала запросите информацию о погоде в каком-либо городе')
 
+
+def print_weather(dict_weather_yandex, update, context):
     day = {'night': 'ночью', 'morning': 'утром', 'day': 'днем', 'evening': 'вечером', 'fact': 'сейчас'}
-    update.message.reply_text(f'Погода в городе {current_area} на данный момент:\n'
+    update.message.reply_text(f'Погода в городе {context.user_data["current_area"]} на данный момент:\n'
                               f'Температура: {dict_weather_yandex["fact"]["temp"]}\n'
                               f'Направление ветра {dict_weather_yandex["fact"]["wind_dir"]}\n'
                               f'Влажность воздуха: {dict_weather_yandex["fact"]["humidity"]}%')
 
 
 def main_weather(update, context):
-    global current_area
     global WEATHER_TOKEN
-
-    print('работает 1')
-    current_area = update.message.text
-    latitude, longitude = geolocation(current_area)
+    context.user_data['current_area'] = update.message.text
+    latitude, longitude = geolocation(context.user_data['current_area'])
     print(latitude, longitude)
     yandex_weather_x = yandex_weather(latitude, longitude, WEATHER_TOKEN)
     print_weather(yandex_weather_x, update, context)
@@ -197,13 +235,16 @@ def main():
     updater = Updater(TOKEN, use_context=True)
 
     dp = updater.dispatcher
-    dp.add_handler(CommandHandler('start', start))
+    dp.add_handler(CommandHandler('start', start, pass_user_data=True))
     dp.add_handler(CommandHandler('help', help))
+    dp.add_handler(CommandHandler('link', link))
+    dp.add_handler(CommandHandler('change_city', change_city))
     conv_handler1 = ConversationHandler(
         entry_points=[CommandHandler('registration', registration)],
         states={
-            1: [MessageHandler(Filters.text & ~Filters.command, registration_name)],
-            2: [MessageHandler(Filters.text & ~Filters.command, registration_password)]
+            1: [MessageHandler(Filters.text & ~Filters.command, registration_name, pass_user_data=True)],
+            2: [MessageHandler(Filters.text & ~Filters.command, registration_password, pass_user_data=True)],
+            3: [MessageHandler(Filters.text & ~Filters.command, registration_city, pass_user_data=True)]
         },
         fallbacks=[CommandHandler('stop', stop)]
     )
@@ -211,18 +252,25 @@ def main():
         entry_points=[CommandHandler('enter', enter)],
         states={
             1: [MessageHandler(Filters.text & ~Filters.command, enter_name)],
-            2: [MessageHandler(Filters.text & ~Filters.command, enter_password)]
+            2: [MessageHandler(Filters.text & ~Filters.command, enter_password, pass_user_data=True)]
         },
         fallbacks=[CommandHandler('stop', stop)])
     conv_handler3 = ConversationHandler(
         entry_points=[CommandHandler('weather', weather)],
         states={
-            1: [MessageHandler(Filters.text & ~Filters.command, main_weather)]
+            1: [MessageHandler(Filters.text & ~Filters.command, main_weather, pass_user_data=True)]
+        },
+        fallbacks=[CommandHandler('stop', stop)])
+    conv_handler4 = ConversationHandler(
+        entry_points=[CommandHandler('change_city', change_city)],
+        states={
+            1: [MessageHandler(Filters.text & ~Filters.command, change_city_handling, pass_user_data=True)]
         },
         fallbacks=[CommandHandler('stop', stop)])
     dp.add_handler(conv_handler1)
     dp.add_handler(conv_handler2)
     dp.add_handler(conv_handler3)
+    dp.add_handler(conv_handler4)
     updater.start_polling()
 
     updater.idle()
