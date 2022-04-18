@@ -1,0 +1,4 @@
+geopy==2.2.0
+python-telegram-bot==13.11
+requests==2.27.1
+SQLAlchemy==1.4.34
